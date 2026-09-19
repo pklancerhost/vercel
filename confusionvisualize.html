@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Confusion Matrix Visualizer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f8f9fa; display: flex; justify-content: center; padding: 20px; }
+        .card { background: white; padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 600px; text-align: center; }
+        .matrix-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 20px 0; }
+        .cell { padding: 20px; border-radius: 8px; font-weight: bold; color: white; }
+        .tn { background: #28a745; } /* Green */
+        .fp { background: #ffc107; color: #333; } /* Yellow */
+        .fn { background: #dc3545; } /* Red */
+        .tp { background: #6c757d; } /* Gray (0) */
+        .btn { background: #007bff; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .btn:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+<div class="card" id="captureRegion">
+    <h2>Confusion Matrix Visualization</h2>
+    <p><code>y_true = [1, 0, 1, 0]</code> vs <code>y_pred = [0, 1, 0, 0]</code></p>
+    
+    <div class="matrix-grid">
+        <div class="cell tn">True Negative (TN)<br>Count: 1 (25%)</div>
+        <div class="cell fp">False Positive (FP)<br>Count: 1 (25%)</div>
+        <div class="cell fn">False Negative (FN)<br>Count: 2 (50%)</div>
+        <div class="cell tp">True Positive (TP)<br>Count: 0 (0%)</div>
+    </div>
+
+    <p><strong>Accuracy:</strong> 25% | <strong>Precision:</strong> 0% | <strong>Recall:</strong> 0%</p>
+</div>
+</body>
+</html>
