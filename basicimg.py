@@ -1,57 +1,21 @@
 import base64
-import json
-from email.parser import BytesParser
-from email.policy import default
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from io import BytesIO
-from urllib.parse import urlparse
+import io
 
+from flask import Flask, jsonify, render_template_string, request
+from PIL import Image, ImageDraw, UnidentifiedImageError
 import torch
 import torchvision.transforms as transforms
-from torchvision.models.detection import fasterrcnn_resnet50_fpn, FasterRCNN_ResNet50_FPN_Weights
-from PIL import Image, ImageDraw
+from torchvision.models.detection import (
+    FasterRCNN_ResNet50_FPN_Weights,
+    fasterrcnn_resnet50_fpn,
+)
 
+app = Flask(__name__)
 
 WEIGHTS = FasterRCNN_ResNet50_FPN_Weights.DEFAULT
 MODEL = fasterrcnn_resnet50_fpn(weights=WEIGHTS)
 MODEL.eval()
 CATEGORIES = WEIGHTS.meta["categories"]
-
-
-def detect_objects(image_bytes):
-    """Run the original detector and return browser-friendly results."""
-    image = Image.open(BytesIO(image_bytes)).convert("RGB")
-    image_tensor = transforms.ToTensor()(image)
-
-    with torch.no_grad():
-        result = MODEL([image_tensor])[0]
-
-    keep = result["scores"] > 0.5
-    detections = []
-    for box, score, label_id in zip(
-        result["boxes"][keep], result["scores"][keep], result["labels"][keep]
-    ):
-        detections.append({
-            "label": CATEGORIES[int(label_id)],
-            "confidence": float(score) * 100,
-            "box": [float(value) for value in box],
-        })
-
-    detections.sort(key=lambda item: item["confidence"], reverse=True)
-    return image, detections
-
-
-def annotate_image(image, detections):
-    result = image.copy()
-    draw = ImageDraw.Draw(result)
-    for detection in detections:
-        box = [int(value) for value in detection["box"]]
-        draw.rectangle(box, outline=(0, 220, 110), width=5)
-        draw.text((box[0] + 6, box[1] + 6), detection["label"], fill=(0, 220, 110))
-    output = BytesIO()
-    result.save(output, format="JPEG", quality=90)
-    return base64.b64encode(output.getvalue()).decode("ascii")
-
 
 INDEX_HTML = """<!doctype html>
 <html lang="en">
@@ -143,49 +107,66 @@ INDEX_HTML = """<!doctype html>
 </html>"""
 
 
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if urlparse(self.path).path != "/":
-            self.send_error(404, "Not Found")
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(INDEX_HTML.encode("utf-8"))
+def detect_objects(image):
+    image_tensor = transforms.ToTensor()(image)
 
-    def do_POST(self):
-        if self.path != "/predict":
-            self.send_error(404, "Not Found")
-            return
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            request = BytesParser(policy=default).parsebytes(
-                b"Content-Type: " + self.headers["Content-Type"].encode() + b"\r\n\r\n" + self.rfile.read(length)
-            )
-            image_part = next((part for part in request.walk() if part.get_filename()), None)
-            if image_part is None:
-                raise ValueError("No image uploaded")
-            image, detections = detect_objects(image_part.get_payload(decode=True))
-            response = {
-                "detections": detections,
-                "imageData": "data:image/jpeg;base64," + annotate_image(image, detections),
-            }
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps(response).encode("utf-8"))
-        except Exception as error:
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": str(error)}).encode("utf-8"))
+    with torch.inference_mode():
+        result = MODEL([image_tensor])[0]
+
+    detections = []
+    for box, score, label_id in zip(result["boxes"], result["scores"], result["labels"]):
+        confidence = float(score) * 100
+        if confidence < 50:
+            continue
+        detections.append({
+            "label": CATEGORIES[int(label_id)],
+            "confidence": confidence,
+            "box": [float(value) for value in box],
+        })
+
+    detections.sort(key=lambda item: item["confidence"], reverse=True)
+    return detections
 
 
-def main():
-    server = ThreadingHTTPServer(("127.0.0.1", 8000), Handler)
-    print("Open your browser at: http://127.0.0.1:8000")
-    server.serve_forever()
+def annotate_image(image, detections):
+    result = image.copy()
+    draw = ImageDraw.Draw(result)
+    for detection in detections:
+        box = [int(value) for value in detection["box"]]
+        draw.rectangle(box, outline=(0, 220, 110), width=5)
+        draw.text((box[0] + 6, box[1] + 6), detection["label"], fill=(0, 220, 110))
+    output = io.BytesIO()
+    result.save(output, format="JPEG", quality=90)
+    return base64.b64encode(output.getvalue()).decode("ascii")
+
+
+@app.get("/")
+def index():
+    return render_template_string(INDEX_HTML)
+
+
+@app.post("/predict")
+def predict():
+    uploaded_file = request.files.get("image")
+    if uploaded_file is None or not uploaded_file.filename:
+        return jsonify(error="Please select an image"), 400
+
+    try:
+        image = Image.open(uploaded_file.stream).convert("RGB")
+    except (UnidentifiedImageError, OSError):
+        return jsonify(error="The uploaded file is not a valid image"), 400
+
+    detections = detect_objects(image)
+    return jsonify(
+        detections=detections,
+        imageData="data:image/jpeg;base64," + annotate_image(image, detections),
+    )
+
+
+@app.errorhandler(413)
+def request_too_large(_error):
+    return jsonify(error="Image must be smaller than 20 MB"), 413
 
 
 if __name__ == "__main__":
-    main()
+    app.run(host="0.0.0.0", port=8000)
