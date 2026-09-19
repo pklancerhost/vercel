@@ -1,0 +1,1 @@
+from basicimg import app
